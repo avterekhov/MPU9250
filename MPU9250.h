@@ -1,14 +1,15 @@
 /**
- * Invensense MPU-9250 library using the SPI interface
+ * Invensense MPU-9250 SPI Library for BeagleBone
  *
- * Copyright (C) 2015 Brian Chen
- * 
+ * Copyright (C) 2016 Alexander V. Terekhov
+ *
  * Open source under the MIT License. See LICENSE.txt.
  */
 
 #ifndef MPU9250_h
 #define MPU9250_h
-#include "Arduino.h"
+
+#include <stdint.h>
 
 // #define AK8963FASTMODE
 
@@ -209,11 +210,10 @@
 class MPU9250 {   
 public:
     // constructor. Default low pass filter of 188Hz
-    MPU9250(long clock, uint8_t cs, uint8_t low_pass_filter = BITS_DLPF_CFG_188HZ, uint8_t low_pass_filter_acc = BITS_DLPF_CFG_188HZ){
-        my_clock = clock;
-        my_cs = cs;
+    MPU9250(int spi_file, uint8_t low_pass_filter = BITS_DLPF_CFG_188HZ, uint8_t low_pass_filter_acc = BITS_DLPF_CFG_188HZ){
         my_low_pass_filter = low_pass_filter;
         my_low_pass_filter_acc = low_pass_filter_acc;
+	this->spi_file = spi_file;
     }
     unsigned int WriteReg(uint8_t WriteAddr, uint8_t WriteData );
     unsigned int ReadReg(uint8_t WriteAddr, uint8_t WriteData );
@@ -227,8 +227,6 @@ public:
     unsigned int set_acc_scale(int scale);
     void calib_acc();
     void calib_mag();
-    void select();
-    void deselect();
     unsigned int whoami();
     uint8_t AK8963_whoami();
     uint8_t get_CNTL1();
@@ -252,15 +250,14 @@ public:
     float randomstuff[3];   // seemed to be an issue with memory being disturbed so allocated random memory space here
 
 private:
-    long my_clock;
-    uint8_t my_cs;
     uint8_t my_low_pass_filter;
     uint8_t my_low_pass_filter_acc;
+    int spi_file;
 
     //float randomstuffs[3];
 
     float g_bias[3];
     float a_bias[3];      // Bias corrections for gyro and accelerometer
 };
- 
+
 #endif

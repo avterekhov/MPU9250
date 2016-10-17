@@ -1,41 +1,38 @@
 /**
- * Invensense MPU-9250 library using the SPI interface
+ * Invensense MPU-9250 SPI Library for BeagleBone
  *
- * Copyright (C) 2015 Brian Chen
+ * Copyright (C) 2016 Alexander V. Terekhov
  *
  * Open source under the MIT License. See LICENSE.txt.
  */
 
-#include "SPI.h"
+
+#include <stdint.h>
+#include <unistd.h>
+
+#include "spi.h"
 #include "MPU9250.h"
 
 unsigned int MPU9250::WriteReg( uint8_t WriteAddr, uint8_t WriteData )
 {
     unsigned int temp_val;
 
-    select();
-    SPI.transfer(WriteAddr);
-    temp_val=SPI.transfer(WriteData);
-    deselect();
+    temp_val = transfer_2bytes(spi_file, WriteAddr, WriteData);
 
-    //delayMicroseconds(50);
+    usleep(50);
     return temp_val;
 }
 unsigned int  MPU9250::ReadReg( uint8_t WriteAddr, uint8_t WriteData )
 {
-    return WriteReg(WriteAddr | READ_FLAG,WriteData);
+    return WriteReg(WriteAddr | READ_FLAG, WriteData);
 }
 void MPU9250::ReadRegs( uint8_t ReadAddr, uint8_t *ReadBuf, unsigned int Bytes )
 {
     unsigned int  i = 0;
 
-    select();
-    SPI.transfer(ReadAddr | READ_FLAG);
-    for(i = 0; i < Bytes; i++)
-        ReadBuf[i] = SPI.transfer(0x00);
-    deselect();
+    transfer_buffer(spi_file, ReadAddr | READ_FLAG, ReadBuf, Bytes);
 
-    //delayMicroseconds(50);
+    usleep(50);
 }
 
 
@@ -56,12 +53,6 @@ void MPU9250::ReadRegs( uint8_t ReadAddr, uint8_t *ReadBuf, unsigned int Bytes )
 #define MPU_InitRegNum 17
 
 bool MPU9250::init(bool calib_gyro, bool calib_acc){
-    pinMode(my_cs, OUTPUT);
-#ifdef CORE_TEENSY
-    digitalWriteFast(my_cs, HIGH);
-#else
-    digitalWrite(my_cs, HIGH);
-#endif
     float temp[3];
 
     if(calib_gyro && calib_acc){
@@ -109,7 +100,7 @@ bool MPU9250::init(bool calib_gyro, bool calib_acc){
 
     for(i = 0; i < MPU_InitRegNum; i++) {
         WriteReg(MPU_Init_Data[i][1], MPU_Init_Data[i][0]);
-        delayMicroseconds(1000);  //I2C must slow down the write speed, otherwise it won't work
+	usleep(1000);  //I2C must slow down the write speed, otherwise it won't work
     }
 
     set_acc_scale(BITS_FS_2G);
@@ -224,13 +215,13 @@ unsigned int MPU9250::whoami(){
 
 void MPU9250::read_acc()
 {
-    uint8_t response[6];
+    uint8_t response[7];
     int16_t bit_data;
     float data;
     int i;
-    ReadRegs(MPUREG_ACCEL_XOUT_H,response,6);
+    ReadRegs(MPUREG_ACCEL_XOUT_H,response,7);
     for(i = 0; i < 3; i++) {
-        bit_data = ((int16_t)response[i*2]<<8)|response[i*2+1];
+        bit_data = ((int16_t)response[i*2+1]<<8)|response[i*2+2];
         data = (float)bit_data;
         accel_data[i] = data/acc_divider - a_bias[i];
     }
@@ -246,13 +237,13 @@ void MPU9250::read_acc()
 
 void MPU9250::read_gyro()
 {
-    uint8_t response[6];
+    uint8_t response[7];
     int16_t bit_data;
     float data;
     int i;
-    ReadRegs(MPUREG_GYRO_XOUT_H,response,6);
+    ReadRegs(MPUREG_GYRO_XOUT_H,response,7);
     for(i = 0; i < 3; i++) {
-        bit_data = ((int16_t)response[i*2]<<8) | response[i*2+1];
+        bit_data = ((int16_t)response[i*2+1]<<8) | response[i*2+2];
         data = (float)bit_data;
         gyro_data[i] = data/gyro_divider - g_bias[i];
     }
@@ -266,15 +257,14 @@ void MPU9250::read_gyro()
  */
 
 void MPU9250::read_temp(){
-    uint8_t response[2];
+    uint8_t response[3];
     int16_t bit_data;
     float data;
-    ReadRegs(MPUREG_TEMP_OUT_H,response,2);
+    ReadRegs(MPUREG_TEMP_OUT_H,response,3);
 
-    bit_data = ((int16_t)response[0]<<8)|response[1];
+    bit_data = ((int16_t)response[1]<<8)|response[2];
     data = (float)bit_data;
     temperature = (data/340)+36.53;
-    deselect();
 }
 
 /*                                 READ ACCELEROMETER CALIBRATION
@@ -295,10 +285,10 @@ void MPU9250::calib_acc()
     //ENABLE SELF TEST need modify
     //temp_scale=WriteReg(MPUREG_ACCEL_CONFIG, 0x80>>axis);
 
-    ReadRegs(MPUREG_SELF_TEST_X,response,4);
-    calib_data[0] = ((response[0]&11100000)>>3) | ((response[3]&00110000)>>4);
-    calib_data[1] = ((response[1]&11100000)>>3) | ((response[3]&00001100)>>2);
-    calib_data[2] = ((response[2]&11100000)>>3) | ((response[3]&00000011));
+    ReadRegs(MPUREG_SELF_TEST_X,response,5);
+    calib_data[0] = ((response[1]&11100000)>>3) | ((response[4]&00110000)>>4);
+    calib_data[1] = ((response[2]&11100000)>>3) | ((response[4]&00001100)>>2);
+    calib_data[2] = ((response[3]&11100000)>>3) | ((response[4]&00000011));
 
     set_acc_scale(temp_scale);
 }
@@ -310,7 +300,8 @@ uint8_t MPU9250::AK8963_whoami(){
     WriteReg(MPUREG_I2C_SLV0_CTRL, 0x81); //Read 1 byte from the magnetometer
 
     //WriteReg(MPUREG_I2C_SLV0_CTRL, 0x81);    //Enable I2C and set bytes
-    delayMicroseconds(100);
+    //delayMicroseconds(100);
+    usleep(100);
     response = WriteReg(MPUREG_EXT_SENS_DATA_00|READ_FLAG, 0x00);    //Read I2C 
     //ReadRegs(MPUREG_EXT_SENS_DATA_00,response,1);
     //response=WriteReg(MPUREG_I2C_SLV0_DO, 0x00);    //Read I2C 
@@ -319,7 +310,7 @@ uint8_t MPU9250::AK8963_whoami(){
 }
 
 void MPU9250::calib_mag(){
-    uint8_t response[3];
+    uint8_t response[4];
     float data;
     int i;
 
@@ -329,17 +320,18 @@ void MPU9250::calib_mag(){
 
     //WriteReg(MPUREG_I2C_SLV0_CTRL, 0x81);    //Enable I2C and set bytes
     //delayMicroseconds(1000);
+    usleep(1000);
     //response[0]=WriteReg(MPUREG_EXT_SENS_DATA_01|READ_FLAG, 0x00);    //Read I2C 
-    ReadRegs(MPUREG_EXT_SENS_DATA_00,response,3);
+    ReadRegs(MPUREG_EXT_SENS_DATA_00,response,4);
     
     //response=WriteReg(MPUREG_I2C_SLV0_DO, 0x00);    //Read I2C 
     for(i = 0; i < 3; i++) {
-        data=response[i];
+        data=response[i+1];
         Magnetometer_ASA[i] = ((data-128)/256+1)*Magnetometer_Sensitivity_Scale_Factor;
     }
 }
 void MPU9250::read_mag(){
-    uint8_t response[7];
+    uint8_t response[8];
     float data;
     int i;
 
@@ -348,10 +340,11 @@ void MPU9250::read_mag(){
     WriteReg(MPUREG_I2C_SLV0_CTRL, 0x87); //Read 6 bytes from the magnetometer
 
     //delayMicroseconds(1000);
-    ReadRegs(MPUREG_EXT_SENS_DATA_00,response,7);
+    usleep(1000);
+    ReadRegs(MPUREG_EXT_SENS_DATA_00,response,8);
     //must start your read from AK8963A register 0x03 and read seven bytes so that upon read of ST2 register 0x09 the AK8963A will unlatch the data registers for the next measurement.
     for(i = 0; i < 3; i++) {
-        mag_data_raw[i] = ((int16_t)response[i*2+1]<<8)|response[i*2];
+        mag_data_raw[i] = ((int16_t)response[i*2+2]<<8)|response[i*2+1];
         data = (float)mag_data_raw[i];
         mag_data[i] = data*Magnetometer_ASA[i];
     }
@@ -362,6 +355,7 @@ uint8_t MPU9250::get_CNTL1(){
     WriteReg(MPUREG_I2C_SLV0_REG, AK8963_CNTL1); //I2C slave 0 register address from where to begin data transfer
     WriteReg(MPUREG_I2C_SLV0_CTRL, 0x81); //Read 1 byte from the magnetometer
 
+    usleep(1000);
     // delayMicroseconds(1000);
     return WriteReg(MPUREG_EXT_SENS_DATA_00|READ_FLAG, 0x00);    //Read I2C 
 }
@@ -378,45 +372,45 @@ void MPU9250::read_all(){
     WriteReg(MPUREG_I2C_SLV0_CTRL, 0x87); //Read 7 bytes from the magnetometer
     //must start your read from AK8963A register 0x03 and read seven bytes so that upon read of ST2 register 0x09 the AK8963A will unlatch the data registers for the next measurement.
 
-    ReadRegs(MPUREG_ACCEL_XOUT_H,response,21);
+    ReadRegs(MPUREG_ACCEL_XOUT_H,response,22);
     //Get accelerometer value
     for(i = 0; i < 3; i++) {
-        bit_data = ((int16_t)response[i*2]<<8) | response[i*2+1];
+        bit_data = ((int16_t)response[i*2+1]<<8) | response[i*2+2];
         data = (float)bit_data;
         accel_data[i] = data/acc_divider - a_bias[i];
     }
     //Get temperature
-    bit_data = ((int16_t)response[i*2]<<8) | response[i*2+1];
+    bit_data = ((int16_t)response[i*2+1]<<8) | response[i*2+2];
     data = (float)bit_data;
     temperature = ((data-21)/333.87)+21;
     //Get gyroscope value
     for(i=4; i < 7; i++) {
-        bit_data = ((int16_t)response[i*2]<<8) | response[i*2+1];
+        bit_data = ((int16_t)response[i*2+1]<<8) | response[i*2+2];
         data = (float)bit_data;
         gyro_data[i-4] = data/gyro_divider - g_bias[i-4];
     }
     //Get Magnetometer value
     for(i=7; i < 10; i++) {
-        mag_data_raw[i] = ((int16_t)response[i*2+1]<<8) | response[i*2];
+        mag_data_raw[i] = ((int16_t)response[i*2+2]<<8) | response[i*2+1];
         data = (float)mag_data_raw[i];
         mag_data[i-7] = data * Magnetometer_ASA[i-7];
     }
 }
 
 void MPU9250::calibrate(float *dest1, float *dest2){  
-    uint8_t data[12]; // data array to hold accelerometer and gyro x, y, z, data
+    uint8_t data[13]; // data array to hold accelerometer and gyro x, y, z, data
     uint16_t ii, packet_count, fifo_count;
     int32_t gyro_bias[3]  = {0, 0, 0}, accel_bias[3] = {0, 0, 0};
   
     // reset device
     WriteReg(MPUREG_PWR_MGMT_1, 0x80); // Write a one to bit 7 reset bit; toggle reset device
-    delay(100);
+    //delay(100);
    
     // get stable time source; Auto select clock source to be PLL gyroscope reference if ready 
     // else use the internal oscillator, bits 2:0 = 001
     WriteReg(MPUREG_PWR_MGMT_1, 0x01);  
     WriteReg(MPUREG_PWR_MGMT_2, 0x00);
-    delay(200);                                    
+    //delay(200);                                    
 
     // Configure device for bias calculation
     WriteReg(MPUREG_INT_ENABLE, 0x00);   // Disable all interrupts
@@ -425,7 +419,7 @@ void MPU9250::calibrate(float *dest1, float *dest2){
     WriteReg(MPUREG_I2C_MST_CTRL, 0x00); // Disable I2C master
     WriteReg(MPUREG_USER_CTRL, 0x00);    // Disable FIFO and I2C master modes
     WriteReg(MPUREG_USER_CTRL, 0x0C);    // Reset FIFO and DMP
-    delay(15);
+    //delay(15);
   
     // Configure MPU6050 gyro and accelerometer for bias calculation
     WriteReg(MPUREG_CONFIG, 0x01);      // Set low-pass filter to 188 Hz
@@ -439,23 +433,23 @@ void MPU9250::calibrate(float *dest1, float *dest2){
       // Configure FIFO to capture accelerometer and gyro data for bias calculation
     WriteReg(MPUREG_USER_CTRL, 0x40);   // Enable FIFO  
     WriteReg(MPUREG_FIFO_EN, 0x78);     // Enable gyro and accelerometer sensors for FIFO  (max size 512 bytes in MPU-9150)
-    delay(40); // accumulate 40 samples in 40 milliseconds = 480 bytes
+    //delay(40); // accumulate 40 samples in 40 milliseconds = 480 bytes
 
     // At end of sample accumulation, turn off FIFO sensor read
     WriteReg(MPUREG_FIFO_EN, 0x00);        // Disable gyro and accelerometer sensors for FIFO
-    ReadRegs(MPUREG_FIFO_COUNTH, data, 2); // read FIFO sample count
-    fifo_count = ((uint16_t)data[0] << 8) | data[1];
+    ReadRegs(MPUREG_FIFO_COUNTH, data, 3); // read FIFO sample count
+    fifo_count = ((uint16_t)data[0] << 8) | data[2];
     packet_count = fifo_count/12;// How many sets of full gyro and accelerometer data for averaging
     
     for (ii = 0; ii < packet_count; ii++) {
         int16_t accel_temp[3] = {0, 0, 0}, gyro_temp[3] = {0, 0, 0};
-        ReadRegs(MPUREG_FIFO_R_W, data, 12); // read data for averaging
-        accel_temp[0] = (int16_t) (((int16_t)data[0] << 8) | data[1]  ) ;  // Form signed 16-bit integer for each sample in FIFO
-        accel_temp[1] = (int16_t) (((int16_t)data[2] << 8) | data[3]  ) ;
-        accel_temp[2] = (int16_t) (((int16_t)data[4] << 8) | data[5]  ) ;    
-        gyro_temp[0]  = (int16_t) (((int16_t)data[6] << 8) | data[7]  ) ;
-        gyro_temp[1]  = (int16_t) (((int16_t)data[8] << 8) | data[9]  ) ;
-        gyro_temp[2]  = (int16_t) (((int16_t)data[10] << 8) | data[11]) ;
+        ReadRegs(MPUREG_FIFO_R_W, data, 13); // read data for averaging
+        accel_temp[0] = (int16_t) (((int16_t)data[1] << 8) | data[2]  ) ;  // Form signed 16-bit integer for each sample in FIFO
+        accel_temp[1] = (int16_t) (((int16_t)data[3] << 8) | data[4]  ) ;
+        accel_temp[2] = (int16_t) (((int16_t)data[5] << 8) | data[6]  ) ;    
+        gyro_temp[0]  = (int16_t) (((int16_t)data[7] << 8) | data[7]  ) ;
+        gyro_temp[1]  = (int16_t) (((int16_t)data[9] << 8) | data[10]  ) ;
+        gyro_temp[2]  = (int16_t) (((int16_t)data[11] << 8) | data[12]) ;
         
         accel_bias[0] += (int32_t) accel_temp[0]; // Sum individual signed 16-bit biases to get accumulated signed 32-bit biases
         accel_bias[1] += (int32_t) accel_temp[1];
@@ -503,12 +497,12 @@ void MPU9250::calibrate(float *dest1, float *dest2){
     // the accelerometer biases calculated above must be divided by 8.
 
     int32_t accel_bias_reg[3] = {0, 0, 0}; // A place to hold the factory accelerometer trim biases
-    ReadRegs(MPUREG_XA_OFFSET_H, data, 2); // Read factory accelerometer trim values
-    accel_bias_reg[0] = (int32_t) (((int16_t)data[0] << 8) | data[1]);
-    ReadRegs(MPUREG_YA_OFFSET_H, data, 2);
-    accel_bias_reg[1] = (int32_t) (((int16_t)data[0] << 8) | data[1]);
-    ReadRegs(MPUREG_ZA_OFFSET_H, data, 2);
-    accel_bias_reg[2] = (int32_t) (((int16_t)data[0] << 8) | data[1]);
+    ReadRegs(MPUREG_XA_OFFSET_H, data, 3); // Read factory accelerometer trim values
+    accel_bias_reg[0] = (int32_t) (((int16_t)data[1] << 8) | data[2]);
+    ReadRegs(MPUREG_YA_OFFSET_H, data, 3);
+    accel_bias_reg[1] = (int32_t) (((int16_t)data[1] << 8) | data[2]);
+    ReadRegs(MPUREG_ZA_OFFSET_H, data, 3);
+    accel_bias_reg[2] = (int32_t) (((int16_t)data[1] << 8) | data[2]);
     
     uint32_t mask = 1uL; // Define mask for temperature compensation bit 0 of lower byte of accelerometer bias registers
     uint8_t mask_bit[3] = {0, 0, 0}; // Define array to hold mask bit for each accelerometer bias axis
@@ -546,23 +540,4 @@ void MPU9250::calibrate(float *dest1, float *dest2){
     dest2[0] = (float)accel_bias[0]/(float)accelsensitivity; 
     dest2[1] = (float)accel_bias[1]/(float)accelsensitivity;
     dest2[2] = (float)accel_bias[2]/(float)accelsensitivity;
-}
-
-void MPU9250::select() {
-    //Set CS low to start transmission (interrupts conversion)
-    SPI.beginTransaction(SPISettings(my_clock, MSBFIRST, SPI_MODE3));
-#ifdef CORE_TEENSY
-    digitalWriteFast(my_cs, LOW);
-#else
-    digitalWrite(my_cs, LOW);
-#endif
-}
-void MPU9250::deselect() {
-    //Set CS high to stop transmission (restarts conversion)
-#ifdef CORE_TEENSY
-    digitalWriteFast(my_cs, HIGH);
-#else
-    digitalWrite(my_cs, HIGH);
-#endif
-    SPI.endTransaction();
 }
